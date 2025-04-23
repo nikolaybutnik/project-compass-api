@@ -5,8 +5,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from http import HTTPStatus
 from api.ai import ai_bp
-import firebase_admin
-from firebase_admin import credentials
+from api.firebase import firebase_bp
 import openai
 
 # Configure logging
@@ -33,14 +32,6 @@ CORS(
         }
     },
 )
-
-# Initialize Firebase
-try:
-    cred = credentials.Certificate(os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY_PATH"))
-    firebase_admin.initialize_app(cred)
-except Exception as e:
-    logger.error(f"Failed to initialize Firebase: {str(e)}")
-    raise
 
 # Initialize OpenAI
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -70,6 +61,7 @@ def method_not_allowed(e):
 
 # Register blueprints
 app.register_blueprint(ai_bp)
+app.register_blueprint(firebase_bp)
 
 
 @app.route("/")
