@@ -44,6 +44,50 @@ def log_response(response):
     return response
 
 
+@firebase_bp.route("/users/<uid>", methods=["GET"])
+def get_user(uid: str | None):
+    try:
+        if not uid:
+            return jsonify({"error": "User ID is required"}), HTTPStatus.BAD_REQUEST
+
+        user_ref = db.collection("users").document(uid)
+        user_doc = user_ref.get()
+
+        if not user_doc.exists:
+            return jsonify({"error": "User not found"}), HTTPStatus.NOT_FOUND
+
+        resp = jsonify(user_doc.to_dict())
+        resp.headers["Access-Control-Allow-Origin"] = os.getenv(
+            "FRONTEND_URL", "http://localhost:3000"
+        )
+        return resp, HTTPStatus.OK
+
+    except ValidationError as e:
+        logger.warning(f"Invalid request: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "error": "Invalid request data",
+                    "details": e.errors(),
+                    "code": "VALIDATION_ERROR",
+                }
+            ),
+            HTTPStatus.BAD_REQUEST,
+        )
+    except firebase_admin.exceptions.FirebaseError as e:
+        logger.error(f"Firebase error: {str(e)}")
+        return (
+            jsonify({"error": "Firebase service error", "code": "FIREBASE_ERROR"}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+    except Exception as e:
+        logger.error(f"Error fetching user: {str(e)}")
+        return (
+            jsonify({"error": "Internal server error", "code": "INTERNAL_ERROR"}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+
 @firebase_bp.route("/users", methods=["POST"])
 def create_or_update_user():
     try:
@@ -65,7 +109,6 @@ def create_or_update_user():
         if not uid:
             return jsonify({"error": "User ID is required"}), HTTPStatus.BAD_REQUEST
 
-        # Get or create user document
         user_ref = db.collection("users").document(uid)
         user_doc = user_ref.get()
 
@@ -105,6 +148,7 @@ def create_or_update_user():
         resp.headers["Access-Control-Allow-Origin"] = os.getenv(
             "FRONTEND_URL", "http://localhost:3000"
         )
+
         return resp, HTTPStatus.OK
 
     except ValidationError as e:
