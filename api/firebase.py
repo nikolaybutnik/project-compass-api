@@ -8,16 +8,10 @@ import logging
 from jsonschema import ValidationError
 from openai import BaseModel
 from api.db import db
+from api.models import ActiveProjectRequest, UserRequest
 
 logger = logging.getLogger(__name__)
 firebase_bp = Blueprint("firebase", __name__, url_prefix="/api/firebase")
-
-
-class UserRequest(BaseModel):
-    uid: str
-    email: str | None = None
-    displayName: str | None = None
-    photoURL: str | None = None
 
 
 @firebase_bp.before_request
@@ -171,6 +165,74 @@ def create_or_update_user():
         )
     except Exception as e:
         logger.error(f"Error creating/updating user: {str(e)}")
+        return (
+            jsonify({"error": "Internal server error", "code": "INTERNAL_ERROR"}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+
+@firebase_bp.route("/users/active-project", methods=["POST"])
+def update_active_project():
+    try:
+        if not request.is_json:
+            logger.warning("Invalid content type: expected application/json")
+            return (
+                jsonify(
+                    {
+                        "error": "Content-Type must be application/json",
+                        "code": "INVALID_CONTENT_TYPE",
+                    }
+                ),
+                HTTPStatus.BAD_REQUEST,
+            )
+
+        data = ActiveProjectRequest(**request.json)
+        user_id = data.userId
+        project_id = data.projectId
+
+        user_ref = db.collection("users").document(user_id)
+        user_doc = user_ref.get()
+
+        if not user_doc.exists:
+            logger.warning(f"User not found: {user_id}")
+            return (
+                jsonify({"error": "User not found", "code": "NOT_FOUND"}),
+                HTTPStatus.NOT_FOUND,
+            )
+
+        update_data = {
+            "activeProjectId": project_id,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        }
+        user_ref.update(update_data)
+
+        updated_user = user_ref.get().to_dict()
+        resp = jsonify(updated_user)
+        resp.headers["Access-Control-Allow-Origin"] = os.getenv(
+            "FRONTEND_URL", "http://localhost:3000"
+        )
+        return resp, HTTPStatus.OK
+
+    except ValidationError as e:
+        logger.warning(f"Invalid request: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "error": "Invalid request data",
+                    "details": e.errors(),
+                    "code": "VALIDATION_ERROR",
+                }
+            ),
+            HTTPStatus.BAD_REQUEST,
+        )
+    except firebase_admin.exceptions.FirebaseError as e:
+        logger.error(f"Firebase error: {str(e)}")
+        return (
+            jsonify({"error": "Firebase service error", "code": "FIREBASE_ERROR"}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
         return (
             jsonify({"error": "Internal server error", "code": "INTERNAL_ERROR"}),
             HTTPStatus.INTERNAL_SERVER_ERROR,
