@@ -4,11 +4,10 @@ from http import HTTPStatus
 import firebase_admin
 from firebase_admin import firestore
 import logging
-
 from jsonschema import ValidationError
-from openai import BaseModel
 from api.db import db
-from api.models import ActiveProjectRequest, UserRequest
+from api.models import ActiveProjectRequest, ProjectRequest, UserRequest
+from api.utils import create_default_kanban
 
 logger = logging.getLogger(__name__)
 firebase_bp = Blueprint("firebase", __name__, url_prefix="/api/firebase")
@@ -105,6 +104,7 @@ def create_or_update_user():
 
         user_ref = db.collection("users").document(uid)
         user_doc = user_ref.get()
+        server_status = None
 
         if not user_doc.exists:
             # Create new user
@@ -120,6 +120,7 @@ def create_or_update_user():
                 "lastLogin": firestore.SERVER_TIMESTAMP,
             }
             user_ref.set(user_data)
+            server_status = HTTPStatus.CREATED
         else:
             # Update existing user
             update_data = {
@@ -135,7 +136,7 @@ def create_or_update_user():
                 update_data["photoURL"] = data.photoURL
 
             user_ref.update(update_data)
-
+            server_status = HTTPStatus.OK
         # Get updated user data
         updated_user = user_ref.get().to_dict()
         resp = jsonify(updated_user)
@@ -143,7 +144,7 @@ def create_or_update_user():
             "FRONTEND_URL", "http://localhost:3000"
         )
 
-        return resp, HTTPStatus.OK
+        return resp, server_status
 
     except ValidationError as e:
         logger.warning(f"Invalid request: {str(e)}")
@@ -212,6 +213,85 @@ def update_active_project():
             "FRONTEND_URL", "http://localhost:3000"
         )
         return resp, HTTPStatus.OK
+
+    except ValidationError as e:
+        logger.warning(f"Invalid request: {str(e)}")
+        return (
+            jsonify(
+                {
+                    "error": "Invalid request data",
+                    "details": e.errors(),
+                    "code": "VALIDATION_ERROR",
+                }
+            ),
+            HTTPStatus.BAD_REQUEST,
+        )
+    except firebase_admin.exceptions.FirebaseError as e:
+        logger.error(f"Firebase error: {str(e)}")
+        return (
+            jsonify({"error": "Firebase service error", "code": "FIREBASE_ERROR"}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        return (
+            jsonify({"error": "Internal server error", "code": "INTERNAL_ERROR"}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+
+@firebase_bp.route("/projects", methods=["POST"])
+def create_project():
+    try:
+        if not request.is_json:
+            logger.warning("Invalid content type: expected application/json")
+            return (
+                jsonify(
+                    {
+                        "error": "Content-Type must be application/json",
+                        "code": "INVALID_CONTENT_TYPE",
+                    }
+                ),
+                HTTPStatus.BAD_REQUEST,
+            )
+
+        data = ProjectRequest(**request.json)
+        user_id = data.userId
+        title = data.title
+        description = data.description
+        status = data.status
+        kanban = data.kanban or create_default_kanban()
+
+        project_ref = db.collection("projects").document()
+        project_data = {
+            "id": project_ref.id,
+            "userId": user_id,
+            "title": title,
+            "description": description,
+            "status": status,
+            "createdAt": firestore.SERVER_TIMESTAMP,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+            "kanban": kanban.model_dump(),
+        }
+
+        project_ref.set(project_data)
+        created_project = project_ref.get()
+
+        if not created_project.exists:
+            logger.error("Failed to create project")
+            return (
+                jsonify(
+                    {"error": "Failed to create project", "code": "CREATION_FAILED"}
+                ),
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+
+        resp = jsonify(created_project.to_dict())
+        resp.headers["Access-Control-Allow-Origin"] = os.getenv(
+            "FRONTEND_URL", "http://localhost:3000"
+        )
+
+        return resp, HTTPStatus.CREATED
 
     except ValidationError as e:
         logger.warning(f"Invalid request: {str(e)}")
