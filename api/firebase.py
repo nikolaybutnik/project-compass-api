@@ -55,18 +55,6 @@ def get_user(uid: str | None):
         )
         return resp, HTTPStatus.OK
 
-    except ValidationError as e:
-        logger.warning(f"Invalid request: {str(e)}")
-        return (
-            jsonify(
-                {
-                    "error": "Invalid request data",
-                    "details": e.errors(),
-                    "code": "VALIDATION_ERROR",
-                }
-            ),
-            HTTPStatus.BAD_REQUEST,
-        )
     except firebase_admin.exceptions.FirebaseError as e:
         logger.error(f"Firebase error: {str(e)}")
         return (
@@ -305,6 +293,46 @@ def create_project():
             ),
             HTTPStatus.BAD_REQUEST,
         )
+    except firebase_admin.exceptions.FirebaseError as e:
+        logger.error(f"Firebase error: {str(e)}")
+        return (
+            jsonify({"error": "Firebase service error", "code": "FIREBASE_ERROR"}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        return (
+            jsonify({"error": "Internal server error", "code": "INTERNAL_ERROR"}),
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+
+@firebase_bp.route("/projects/<uid>", methods=["GET"])
+def get_projects(uid: str | None):
+    try:
+        if not uid:
+            return jsonify({"error": "User ID is required"}), HTTPStatus.BAD_REQUEST
+
+        projects_ref = db.collection("projects")
+        projects_query = projects_ref.where("userId", "==", uid).order_by(
+            "updatedAt", "DESCENDING"
+        )
+        projects_docs = list(projects_query.get())
+
+        if not projects_docs:
+            return (
+                jsonify({"error": "No projects were found for this user"}),
+                HTTPStatus.NOT_FOUND,
+            )
+
+        projects = [project.to_dict() for project in projects_docs]
+        resp = jsonify(projects)
+        resp.headers["Access-Control-Allow-Origin"] = os.getenv(
+            "FRONTEND_URL", "http://localhost:3000"
+        )
+
+        return resp, HTTPStatus.OK
+
     except firebase_admin.exceptions.FirebaseError as e:
         logger.error(f"Firebase error: {str(e)}")
         return (
